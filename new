@@ -1,0 +1,359 @@
+# exp 4 ( naive bayes)
+from collections import Counter, defaultdict
+
+def train(rows):
+    n_attrs = len(rows[0]) - 1
+    classes = [r[-1] for r in rows]
+    class_counts = Counter(classes)
+    priors = {c: cnt / len(rows) for c, cnt in class_counts.items()}
+    cond = {i: defaultdict(lambda: Counter()) for i in range(n_attrs)}
+    vocab = {i: set() for i in range(n_attrs)}
+    for r in rows:
+        for i in range(n_attrs):
+            cond[i][r[-1]][r[i]] += 1
+            vocab[i].add(r[i])
+    return priors, cond, class_counts, vocab
+
+def classify(entry, priors, cond, class_counts, vocab, laplace=1):
+    best, best_p = None, -1.0
+    for c, p_c in priors.items():
+        p = p_c
+        for i, val in enumerate(entry):
+            val_count = cond[i][c].get(val, 0) + laplace
+            V = len(vocab[i]) + (1 if val not in vocab[i] else 0)
+            total = class_counts[c] + laplace * V
+            p *= val_count / total if total > 0 else 0
+        print(f"score for {c}: {p}")
+        if p > best_p:
+            best_p, best = p, c
+    return best, best_p
+
+if __name__ == "__main__":
+    header = ["age", "income", "student", "buys_computer"]
+    rows = [
+        ["youth", "high", "no", "no"],
+        ["youth", "high", "no", "no"],
+        ["middle", "medium", "no", "yes"],
+        ["senior", "low", "yes", "yes"],
+        ["senior", "low", "no", "no"]
+    ]
+    priors, cond, class_counts, vocab = train(rows)
+    entry = [input(f"Enter {name}: ").strip() for name in header[:-1]]
+    label, prob = classify(entry, priors, cond, class_counts, vocab, laplace=1)
+    print("\nSample X=<" + " ".join(entry) + ">")
+    print("Decision:", label, "with score", prob)
+
+
+
+
+
+
+#exp 5 ( division tree)
+
+import math
+from collections import Counter
+
+data = [
+    ['Comedy', 'Evening', 'Friends', 'Yes'],
+    ['Action', 'Evening', 'Friends', 'Yes'],
+    ['Comedy', 'Morning', 'Family', 'Yes'],
+    ['Drama', 'Evening', 'Partner', 'No'],
+    ['Action', 'Afternoon', 'Friends', 'Yes'],
+    ['Drama', 'Morning', 'Alone', 'No'],
+    ['Comedy', 'Afternoon', 'Alone', 'No'],
+    ['Action', 'Evening', 'Partner', 'Yes'],
+    ['Drama', 'Afternoon', 'Family', 'No']
+]
+headers = ['Genre', 'Time', 'Companion', 'GoToMovie']
+
+def entropy(rows):
+    y = [r[-1] for r in rows]
+    total = len(y)
+    if total == 0: return 0.0
+    return -sum((cnt/total) * math.log2(cnt/total) for cnt in Counter(y).values())
+
+def info_gain(rows, attr_idx):
+    base = entropy(rows)
+    total = len(rows)
+    vals = {}
+    for r in rows:
+        vals.setdefault(r[attr_idx], []).append(r)
+    weighted = sum((len(v)/total) * entropy(v) for v in vals.values())
+    return base - weighted
+
+def build(rows, attrs):
+    ys = [r[-1] for r in rows]
+    if len(set(ys)) == 1: return ys[0]
+    if not attrs: return Counter(ys).most_common(1)[0][0]
+    gains = [(info_gain(rows, i), i) for i in attrs]
+    best_gain, best_idx = max(gains, key=lambda x: x[0])
+    if best_gain == 0: return Counter(ys).most_common(1)[0][0]
+    tree = {headers[best_idx]: {}}
+    values = sorted(set(r[best_idx] for r in rows))
+    for v in values:
+        subset = [r[:best_idx] + r[best_idx+1:] for r in rows if r[best_idx] == v]
+        new_headers = headers[:best_idx] + headers[best_idx+1:]
+        subtree = build([[ *s[:-1], s[-1] ] for s in subset], [i-1 if i>best_idx else i for i in attrs if i!=best_idx])
+        tree[headers[best_idx]][v] = subtree
+    return tree
+
+def print_tree(node, indent=""):
+    if not isinstance(node, dict):
+        print(indent + f"GoToMovie = {node}")
+        return
+    for attr, branches in node.items():
+        for val, sub in branches.items():
+            print(indent + f"if {attr} == {val}:")
+            print_tree(sub, indent + "    ")
+
+if __name__ == "__main__":
+    rows = [list(r) for r in data]
+    attrs = list(range(len(headers)-1))
+    tree = build(rows, attrs)
+    print_tree(tree)
+
+
+
+
+
+
+#exp 7( k mean 1d)
+# kmeans1d.py
+import copy
+
+def cal_diff(a, m):
+    diff = [abs(a - mi) for mi in m]
+    val = min(range(len(diff)), key=lambda i: diff[i])
+    return val
+
+def cal_mean(k, n, p):
+    m = [0.0]*p
+    for i in range(p):
+        count = 0
+        for j in range(n):
+            if k[i][j] != -1:
+                m[i] += k[i][j]
+                count += 1
+        if count != 0:
+            m[i] /= count
+    return m
+
+def check_convergence(tempk, k, p, n):
+    for i in range(p):
+        for j in range(n):
+            if tempk[i][j] != k[i][j]:
+                return False
+    return True
+
+def main():
+    n = int(input("Enter the number of data points: ").strip())
+    d = [0]*n
+    print(f"Enter {n} data points:")
+    for i in range(n):
+        d[i] = int(input().strip())
+    p = int(input("Enter number of clusters (k): ").strip())
+
+    k = [[-1]*n for _ in range(p)]
+    tempk = [[-1]*n for _ in range(p)]
+    m = [0.0]*p
+
+    for i in range(p):
+        m[i] = d[i]
+
+    while True:
+        for i in range(p):
+            for j in range(n):
+                k[i][j] = -1
+        clusterCounts = [0]*p
+
+        for i in range(n):
+            cluster = cal_diff(d[i], m)
+            k[cluster][clusterCounts[cluster]] = d[i]
+            clusterCounts[cluster] += 1
+
+        m = cal_mean(k, n, p)
+        converged = check_convergence(tempk, k, p, n)
+        for i in range(p):
+            tempk[i] = k[i][:]
+
+        print("Current Clusters:")
+        for i in range(p):
+            print("Cluster " + str(i+1) + ": ", end="")
+            for val in k[i]:
+                if val != -1:
+                    print(val, end=" ")
+            print()
+        print("Means: ", end="")
+        for i in range(p):
+            print(f"m{i+1}={m[i]} ", end="")
+        print()
+
+        if converged:
+            break
+
+    print("\nFinal Clusters:")
+    for i in range(p):
+        print("Cluster " + str(i+1) + ": ", end="")
+        for val in k[i]:
+            if val != -1:
+                print(val, end=" ")
+        print()
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+
+#exp 8( fp tree)
+
+
+# fp_tree_sim.py
+def read_int(prompt=""):
+    return int(input(prompt).strip())
+
+def read_float(prompt=""):
+    return float(input(prompt).strip())
+
+def main():
+    no_t = read_int("Enter number of transactions: ")
+    no_i = read_int("Enter number of items in the Itemset: ")
+    min_sup = read_float("Enter the minimum support: ")
+    print("Enter the i-tem set (use lowercase letters). Enter '0' to end each transaction.")
+    d = [ [] for _ in range(no_t) ]
+    for i in range(no_t):
+        print(f"Transaction TID {i+1}")
+        while True:
+            s = input().strip()
+            if s == "0" or s == "":
+                break
+            d[i].append(s)
+
+    item_set = [chr(97 + i) for i in range(no_i)]
+    print("Item Set:", " ".join(item_set))
+
+    sup = [0]*no_i
+    for j in range(no_i):
+        for i in range(no_t):
+            for token in d[i]:
+                if token and token[0] == item_set[j]:
+                    sup[j] += 1
+
+    print("\nSupports:", " ".join(str(x) for x in sup))
+
+    item_set_new = [item_set[i] if sup[i] >= min_sup else None for i in range(no_i)]
+
+    # Sort by support descending keeping item_set_new aligned with sup
+    pairs = [(sup[i], item_set_new[i]) for i in range(no_i)]
+    pairs.sort(key=lambda x: x[0], reverse=True)
+
+    # Build finals
+    is_final = []
+    sup_final = []
+    for s, it in pairs:
+        if it is not None:
+            is_final.append(it)
+            sup_final.append(s)
+
+    print("\n\nFrequent Items (after applying min support):")
+    for it, s in zip(is_final, sup_final):
+        print(it, "\t", s)
+
+    print("\nFP-Tree (one path per transaction):")
+    for i in range(no_t):
+        print("Transaction No:", i+1)
+        print("Root", end="")
+        for m in range(len(is_final)):
+            for token in d[i]:
+                if token and token[0] == is_final[m] and sup_final[m] > 0:
+                    print(" ->", is_final[m], end="")
+                    sup_final[m] -= 1
+                    break
+        print("\n")
+
+if __name__ == "__main__":
+    main()
+
+
+
+
+
+
+#exp 9(apriori)
+
+# apriori.py
+from itertools import combinations
+
+class Apriori:
+    def __init__(self, transactions, min_support, min_confidence):
+        self.transactions = [set(t) for t in transactions]
+        self.min_support = min_support
+        self.min_confidence = min_confidence
+        self.num_trans = len(self.transactions)
+
+    def calculate_support(self, itemset):
+        count = sum(1 for t in self.transactions if itemset.issubset(t))
+        return count / self.num_trans
+
+    def generate_candidates(self, frequent_itemsets, k):
+        items = list(frequent_itemsets)
+        candidates = set()
+        for i in range(len(items)):
+            for j in range(i + 1, len(items)):
+                union = items[i] | items[j]
+                if len(union) == k:
+                    candidates.add(frozenset(union))
+        return candidates
+
+    def generate_frequent_itemsets(self):
+        candidates = set()
+        for t in self.transactions:
+            for item in t:
+                candidates.add(frozenset([item]))
+
+        k = 1
+        frequent_itemsets = set()
+        while candidates:
+            next_frequent = set()
+            for itemset in candidates:
+                support = self.calculate_support(set(itemset))
+                if support >= self.min_support:
+                    next_frequent.add(itemset)
+                    frequent_itemsets.add(itemset)
+                    print(f"Frequent Itemset: {set(itemset)} , Support = {support}")
+            k += 1
+            candidates = self.generate_candidates(next_frequent, k)
+        return frequent_itemsets
+
+    def generate_association_rules(self, frequent_itemsets):
+        print("\n--- Association Rules ---")
+        for itemset in frequent_itemsets:
+            if len(itemset) > 1:
+                for item in itemset:
+                    left = frozenset([item])
+                    right = set(itemset - left)
+                    support_itemset = self.calculate_support(set(itemset))
+                    support_left = self.calculate_support(set(left))
+                    if support_left > 0:
+                        confidence = support_itemset / support_left
+                        if confidence >= self.min_confidence:
+                            print(f"{set(left)} => {right} (Support={support_itemset}, Confidence={confidence})")
+
+if __name__ == "__main__":
+    transactions = [
+        {"A", "B", "C"},
+        {"A", "C"},
+        {"B", "C"},
+        {"A", "B"},
+        {"A", "B", "C"}
+    ]
+    min_support = 0.4
+    min_confidence = 0.6
+    apriori = Apriori(transactions, min_support, min_confidence)
+    frequent_itemsets = apriori.generate_frequent_itemsets()
+    apriori.generate_association_rules(frequent_itemsets)
+
+ 
